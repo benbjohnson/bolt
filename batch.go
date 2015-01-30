@@ -25,6 +25,7 @@ func (db *DB) Batch(fn func(*Tx) error) error {
 		db: db,
 	}
 	b.mu.Lock()
+
 	for {
 		var cur = (*batch)(atomic.LoadPointer(&db.batch))
 		if cur != nil {

@@ -1,100 +1,74 @@
 package bolt_test
 
 import (
-	"io/ioutil"
-	"os"
 	"testing"
 
 	"github.com/boltdb/bolt"
 )
 
-func withDB(t testing.TB, fn func(*bolt.DB)) {
-	tmp, err := ioutil.TempFile("", "bolt-batch-test-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = tmp.Close()
-	defer func() {
-		_ = os.Remove(tmp.Name())
-	}()
-	db, err := bolt.Open(tmp.Name(), 0600, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fn(db)
-}
+// Ensure two functions can perform updates in a single batch.
+func TestDB_Batch(t *testing.T) {
+	db := NewTestDB()
+	defer db.Close()
+	db.MustCreateBucket([]byte("widgets"))
 
-func withBucket(t testing.TB, db *bolt.DB, name string, fn func(*bolt.DB)) {
-	if err := db.Update(func(tx *bolt.Tx) error {
-		tx.CreateBucket([]byte(name))
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	fn(db)
-}
-
-func TestSimple(t *testing.T) {
-	withDB(t, func(db *bolt.DB) {
-		withBucket(t, db, "widgets", func(db *bolt.DB) {
-			errCh := make(chan error)
-			one := func(tx *bolt.Tx) error {
-				return tx.Bucket([]byte("widgets")).Put([]byte("one"), []byte("ONE"))
-			}
-			go func() {
-				errCh <- db.Batch(one)
-			}()
-			two := func(tx *bolt.Tx) error {
-				return tx.Bucket([]byte("widgets")).Put([]byte("two"), []byte("TWO"))
-			}
-			go func() {
-				errCh <- db.Batch(two)
-			}()
-
-			if err := <-errCh; err != nil {
-				t.Fatal(err)
-			}
-			if err := <-errCh; err != nil {
-				t.Fatal(err)
-			}
-
-			if err := db.View(func(tx *bolt.Tx) error {
-				bucket := tx.Bucket([]byte("widgets"))
-				if g, e := string(bucket.Get([]byte("one"))), "ONE"; g != e {
-					t.Errorf("bad content: %q != %q", g, e)
-				}
-				if g, e := string(bucket.Get([]byte("two"))), "TWO"; g != e {
-					t.Errorf("bad content: %q != %q", g, e)
-				}
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
-		})
-	})
-}
-
-func TestPanic(t *testing.T) {
-	withDB(t, func(db *bolt.DB) {
-		var sentinel int
-		var bork = &sentinel
-		var problem interface{}
-		var err error
-		func() {
-			defer func() {
-				if p := recover(); p != nil {
-					problem = p
-				}
-			}()
-			err = db.Batch(func(tx *bolt.Tx) error {
-				panic(bork)
+	// Iterate over multiple updates in separate goroutines.
+	n := 2
+	ch := make(chan error)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			ch <- db.Batch(func(tx *bolt.Tx) error {
+				return tx.Bucket([]byte("widgets")).Put(ui64tob(uint64(i)), []byte{})
 			})
-		}()
-		if g, e := err, error(nil); g != e {
-			t.Fatalf("wrong error: %v != %v", g, e)
+		}(i)
+	}
+
+	// Check all responses to make sure there's no error.
+	for i := 0; i < n; i++ {
+		if err := <-ch; err != nil {
+			t.Fatal(err)
 		}
-		if g, e := problem, bork; g != e {
-			t.Fatalf("wrong error: %v != %v", g, e)
+	}
+
+	// Ensure data is correct.
+	db.MustView(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("widgets"))
+		for i := 0; i < n; i++ {
+			if v := b.Get(ui64tob(uint64(i))); v == nil {
+				t.Errorf("key not found: %d", i)
+			}
 		}
+		return nil
 	})
+}
+
+func TestDB_Batch_Panic(t *testing.T) {
+	db := NewTestDB()
+	defer db.Close()
+
+	var sentinel int
+	var bork = &sentinel
+	var problem interface{}
+	var err error
+
+	// Execute a function inside a batch that panics.
+	func() {
+		defer func() {
+			if p := recover(); p != nil {
+				problem = p
+			}
+		}()
+		err = db.Batch(func(tx *bolt.Tx) error {
+			panic(bork)
+		})
+	}()
+
+	// Verify there is no error.
+	if g, e := err, error(nil); g != e {
+		t.Fatalf("wrong error: %v != %v", g, e)
+	}
+	// Verify the panic was captured.
+	if g, e := problem, bork; g != e {
+		t.Fatalf("wrong error: %v != %v", g, e)
+	}
 }
