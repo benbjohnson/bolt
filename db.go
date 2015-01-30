@@ -24,16 +24,34 @@ const version = 2
 // Represents a marker value to indicate that a file is a Bolt DB.
 const magic uint32 = 0xED0CDAED
 
-// IgnoreNoSync specifies whether the NoSync field of a DB is ignored when
-// syncing changes to a file.  This is required as some operating systems,
-// such as OpenBSD, do not have a unified buffer cache (UBC) and writes
-// must be synchronzied using the msync(2) syscall.
-const IgnoreNoSync = runtime.GOOS == "openbsd"
+const (
+	// DefaultMaxBatchSize is the default number of updates batched together
+	// when using DB.Batch().
+	DefaultMaxBatchSize = 1000
+
+	// DefaultMaxBatchDelay is the default amount of time batches wait for new
+	// updates before executing.
+	DefaultMaxBatchDelay = 10 * time.Millisecond
+
+	// IgnoreNoSync specifies whether the NoSync field of a DB is ignored when
+	// syncing changes to a file.  This is required as some operating systems,
+	// such as OpenBSD, do not have a unified buffer cache (UBC) and writes
+	// must be synchronzied using the msync(2) syscall.
+	IgnoreNoSync = runtime.GOOS == "openbsd"
+)
 
 // DB represents a collection of buckets persisted to a file on disk.
 // All data access is performed through transactions which can be obtained through the DB.
 // All the functions on DB will return a ErrDatabaseNotOpen if accessed before Open() is called.
 type DB struct {
+	// MaxBatchSize is the maximum size of a batch.
+	// If zero or less then DefaultMaxBatchSize is used.
+	MaxBatchSize int
+
+	// MaxBatchDelay sets the maximum delay before a batch starts.
+	// If zero or less then DefaultMaxBatchDelay is used.
+	MaxBatchDelay time.Duration
+
 	// When enabled, the database will perform a Check() after every commit.
 	// A panic is issued if the database is in an inconsistent state. This
 	// flag has a large performance impact so it should only be used for
@@ -66,9 +84,8 @@ type DB struct {
 	freelist *freelist
 	stats    Stats
 
-	batchMaxSize  int
-	batchMaxDelay time.Duration
-	batch         unsafe.Pointer
+	batch     *batch
+	batchlock sync.Mutex // Protects access to batch
 
 	rwlock   sync.Mutex   // Allows only one writer at a time.
 	metalock sync.Mutex   // Protects meta page access.
@@ -104,22 +121,6 @@ func Open(path string, mode os.FileMode, options *Options) (*DB, error) {
 	// Set default options if no options are provided.
 	if options == nil {
 		options = DefaultOptions
-	}
-
-	db.batchMaxSize = options.BatchMaxSize
-	if db.batchMaxSize == 0 {
-		db.batchMaxSize = DefaultOptions.BatchMaxSize
-	}
-	if db.batchMaxSize <= 0 {
-		return nil, fmt.Errorf("BatchMaxSize is impossibly low: %v", db.batchMaxSize)
-	}
-
-	db.batchMaxDelay = options.BatchMaxDelay
-	if db.batchMaxDelay == 0 {
-		db.batchMaxDelay = DefaultOptions.BatchMaxDelay
-	}
-	if db.batchMaxDelay <= 0 {
-		return nil, fmt.Errorf("BatchMaxDelay is impossibly low: %v", db.batchMaxDelay)
 	}
 
 	// Open data file and separate sync handler for metadata writes.
@@ -592,22 +593,12 @@ type Options struct {
 	// When set to zero it will wait indefinitely. This option is only
 	// available on Darwin and Linux.
 	Timeout time.Duration
-
-	// BatchMaxSize is the maximum size of a batch. If <=0, the value
-	// from DefaultOptions is used instead.
-	BatchMaxSize int
-
-	// BatchMaxDelay sets the maximum delay before a batch starts. If
-	// <=0, the value from DefaultOptions is used instead.
-	BatchMaxDelay time.Duration
 }
 
 // DefaultOptions represent the options used if nil options are passed into Open().
 // No timeout is used which will cause Bolt to wait indefinitely for a lock.
 var DefaultOptions = &Options{
-	Timeout:       0,
-	BatchMaxSize:  1000,
-	BatchMaxDelay: 10 * time.Millisecond,
+	Timeout: 0,
 }
 
 // Stats represents statistics about the database.

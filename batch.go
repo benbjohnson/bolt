@@ -21,45 +21,36 @@ import (
 // take permanent effect only after a successful return is seen in
 // caller.
 func (db *DB) Batch(fn func(*Tx) error) error {
-	b := batch{
-		db: db,
+	db.batchlock.Lock()
+	if db.batch == nil {
+		db.batch = newBatch(db)
 	}
-	b.mu.Lock()
-
-	for {
-		var cur = (*batch)(atomic.LoadPointer(&db.batch))
-		if cur != nil {
-			// another call is cur
-			if ch := cur.merge(fn); ch != nil {
-				// cur will call our fn
-				err := <-ch
-				if p, ok := err.(panicked); ok {
-					panic(p.reason)
-				}
-				return err
-			}
-			// this batch refused to accept more work
-		}
-
-		// try to become cur
-		if atomic.CompareAndSwapPointer(&db.batch, unsafe.Pointer(cur), unsafe.Pointer(&b)) {
-			// we are now cur
-			return b.master(db, fn)
-		}
-	}
+	db.batch.fns = append(db.batch.fns, batchCall{fn: fn, err: make(chan error, 1)})
+	db.batchlock.Unlock()
 }
 
-type call struct {
+type batchCall struct {
 	fn  func(*Tx) error
 	err chan<- error
 }
 
 type batch struct {
 	db      *DB
-	mu      sync.Mutex
 	calls   []call
-	full    chan struct{}
+	start   chan struct{}
 	started bool
+}
+
+// newBatch creates a batch attached to a DB.
+func newBatch(db *DB) *batch {
+	b := &batch{
+		start: make(chan struct{}, 1),
+	}
+}
+
+// add adds a call to the batch.
+// If the batch is full then then force start the existing batch and create a new one.
+func (b *batch) add(fn func(*Tx) error) error {
 }
 
 // caller has locked batch.mu for us
