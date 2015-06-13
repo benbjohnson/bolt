@@ -3,6 +3,7 @@ package bolt
 import (
 	"math/rand"
 	"reflect"
+	"sort"
 	"testing"
 	"unsafe"
 )
@@ -146,9 +147,10 @@ func benchmark_FreelistRelease(b *testing.B, size int) {
 
 func randomPgids(n int) []pgid {
 	rand.Seed(42)
-	pgids := make([]pgid, n)
+	pgids := make(pgids, n)
 	for i := range pgids {
 		pgids[i] = pgid(rand.Int63())
 	}
+	sort.Sort(pgids)
 	return pgids
 }
