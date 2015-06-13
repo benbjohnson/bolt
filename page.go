@@ -3,7 +3,6 @@ package bolt
 import (
 	"fmt"
 	"os"
-	"sort"
 	"unsafe"
 )
 
@@ -135,29 +134,40 @@ func (s pgids) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 func (s pgids) Less(i, j int) bool { return s[i] < s[j] }
 
 // Merge two sorted pgid lists.
-func (s1 pgids) Merge(s2 pgids) pgids {
-	if len(s1) == 0 {
-		return s2
+func (a pgids) Merge(b pgids) pgids {
+	// Return one list if the other is empty.
+	if len(a) == 0 {
+		return b
 	}
-	if len(s2) == 0 {
-		return s1
+	if len(b) == 0 {
+		return a
 	}
-	merged := make(pgids, 0, len(s1)+len(s2))
-	lead, follow := s1, s2
-	if s2[0] < s1[0] {
-		lead, follow = s2, s1
-	}
-	for len(lead) > 0 {
-		// Merge largest prefix of lead that is ahead of follow[0].
-		n := sort.Search(len(lead), func(i int) bool { return lead[i] > follow[0] })
-		merged = append(merged, lead[:n]...)
-		if n >= len(lead) {
+
+	// Make a new list to combine the two.
+	merged := make(pgids, len(a)+len(b))
+
+	// Walk the lists and append the next highest id.
+	ai, an := 0, len(a)
+	bi, bn := 0, len(b)
+	for i := 0; i < len(merged); i++ {
+		// Use the other list if one is exhausted.
+		if ai >= an {
+			copy(merged[i:], b[bi:])
+			break
+		} else if bi >= bn {
+			copy(merged[i:], a[ai:])
 			break
 		}
-		// Swap lead and follow.
-		lead, follow = follow, lead[n:]
+
+		// Otherwise use the lower value.
+		if av, bv := a[ai], b[bi]; av < bv {
+			merged[i] = av
+			ai++
+		} else {
+			merged[i] = bv
+			bi++
+		}
 	}
-	// Append what's left in follow.
-	merged = append(merged, follow...)
+
 	return merged
 }
