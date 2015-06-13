@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	"math/rand"
 	"reflect"
 	"testing"
 	"unsafe"
@@ -126,4 +127,27 @@ func TestFreelist_write(t *testing.T) {
 	if exp := []pgid{3, 11, 12, 28, 39}; !reflect.DeepEqual(exp, f2.ids) {
 		t.Fatalf("exp=%v; got=%v", exp, f2.ids)
 	}
+}
+
+func Benchmark_FreelistRelease10K(b *testing.B)    { benchmark_FreelistRelease(b, 10000) }
+func Benchmark_FreelistRelease100K(b *testing.B)   { benchmark_FreelistRelease(b, 100000) }
+func Benchmark_FreelistRelease1000K(b *testing.B)  { benchmark_FreelistRelease(b, 1000000) }
+func Benchmark_FreelistRelease10000K(b *testing.B) { benchmark_FreelistRelease(b, 10000000) }
+
+func benchmark_FreelistRelease(b *testing.B, size int) {
+	ids := randomPgids(size)
+	pending := randomPgids(len(ids) / 400)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		f := &freelist{ids: ids, pending: map[txid][]pgid{1: pending}}
+		f.release(1)
+	}
+}
+
+func randomPgids(n int) []pgid {
+	pgids := make([]pgid, n)
+	for i := range pgids {
+		pgids[i] = pgid(rand.Int63())
+	}
+	return pgids
 }

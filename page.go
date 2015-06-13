@@ -3,6 +3,7 @@ package bolt
 import (
 	"fmt"
 	"os"
+	"sort"
 	"unsafe"
 )
 
@@ -132,3 +133,29 @@ type pgids []pgid
 func (s pgids) Len() int           { return len(s) }
 func (s pgids) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 func (s pgids) Less(i, j int) bool { return s[i] < s[j] }
+
+// Merge two sorted pgid lists.
+func (s1 pgids) Merge(s2 pgids) pgids {
+	if len(s1) == 0 {
+		return s2
+	}
+	if len(s2) == 0 {
+		return s1
+	}
+	lead, follow := s1, s2
+	if s2[0] < s1[0] {
+		lead = s2
+		follow = s1
+	}
+	merged := make(pgids, 0, len(s1)+len(s2))
+	for len(lead) > 0 {
+		n := sort.Search(len(lead), func(i int) bool { return lead[i] > follow[0] })
+		merged = append(merged, lead[:n]...)
+		if n >= len(lead) {
+			break
+		}
+		lead, follow = follow, lead[n:]
+	}
+	merged = append(merged, follow...)
+	return merged
+}
