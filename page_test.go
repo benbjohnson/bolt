@@ -2,7 +2,9 @@ package bolt
 
 import (
 	"reflect"
+	"sort"
 	"testing"
+	"testing/quick"
 )
 
 // Ensure that the page type can be returned in human readable format.
@@ -41,5 +43,33 @@ func TestPgids_Merge(t *testing.T) {
 	c = a.Merge(b)
 	if !reflect.DeepEqual(c, pgids{4, 5, 6, 8, 9, 10, 11, 12, 13, 25, 27, 30, 35, 36}) {
 		t.Errorf("mismatch: %v", c)
+	}
+}
+
+func TestPgids_merge_quick(t *testing.T) {
+	if err := quick.Check(func(a, b pgids) bool {
+		// Limit the total size of the lists for testing readability.
+		for i := range a {
+			a[i] %= 10000
+		}
+		for i := range b {
+			b[i] %= 10000
+		}
+
+		// Merge the two lists together.
+		got := a.Merge(b)
+
+		// The expected value should be the two lists combined and sorted.
+		exp := append(a, b...)
+		sort.Sort(exp)
+
+		if !reflect.DeepEqual(exp, got) {
+			t.Errorf("\nexp=%+v\ngot=%+v\n", exp, got)
+			return false
+		}
+
+		return true
+	}, nil); err != nil {
+		t.Fatal(err)
 	}
 }
