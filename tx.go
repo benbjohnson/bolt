@@ -253,9 +253,11 @@ func (tx *Tx) close() {
 	}
 
 	// Clear all references.
+	tx.root.dealloc()
+	tx.root = Bucket{tx: tx}
+
 	tx.db = nil
 	tx.meta = nil
-	tx.root = Bucket{tx: tx}
 	tx.pages = nil
 }
 

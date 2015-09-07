@@ -49,6 +49,25 @@ type Bucket struct {
 	FillPercent float64
 }
 
+func (b *Bucket) dealloc() {
+	for _, sub := range b.buckets {
+		sub.dealloc()
+	}
+	b.buckets = nil
+
+	if b.rootNode != nil {
+		b.rootNode.dealloc()
+		b.rootNode = nil
+	}
+
+	for _, n := range b.nodes {
+		n.dealloc()
+	}
+	b.nodes = nil
+
+	b.page = nil
+}
+
 // bucket represents the on-file representation of a bucket.
 // This is stored as the "value" of a bucket key. If the bucket is small enough,
 // then its root page can be stored inline in the "value", after the bucket

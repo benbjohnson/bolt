@@ -20,6 +20,22 @@ type node struct {
 	inodes     inodes
 }
 
+func (n *node) dealloc() {
+	n.bucket = nil
+	n.key = nil
+	n.parent = nil
+
+	for _, child := range n.children {
+		child.dealloc()
+	}
+	n.children = nil
+
+	for _, inode := range n.inodes {
+		inode.dealloc()
+	}
+	n.inodes = nil
+}
+
 // root returns the top-level node this node is attached to.
 func (n *node) root() *node {
 	if n.parent == nil {
@@ -631,6 +647,11 @@ type inode struct {
 	pgid  pgid
 	key   []byte
 	value []byte
+}
+
+func (i *inode) dealloc() {
+	i.key = nil
+	i.value = nil
 }
 
 type inodes []inode
