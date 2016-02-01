@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"io/ioutil"
 	"math/rand"
@@ -110,6 +111,8 @@ func (m *Main) Run(args ...string) error {
 		return newPageCommand(m).Run(args[1:]...)
 	case "pages":
 		return newPagesCommand(m).Run(args[1:]...)
+	case "rollback":
+		return newRollbackCommand(m).Run(args[1:]...)
 	case "stats":
 		return newStatsCommand(m).Run(args[1:]...)
 	default:
@@ -133,6 +136,7 @@ The commands are:
     info        print basic info
     help        print this screen
     pages       print list of pages with their types
+    rollback    rolls the data file back to the previous commit
     stats       iterate over all pages and generate usage stats
 
 Use "bolt [command] -h" for more information about a command.
@@ -840,6 +844,90 @@ func (cmd *StatsCommand) Run(args ...string) error {
 	})
 }
 
+// RollbackCommand represents the "rollback" command execution.
+type RollbackCommand struct {
+	Stdin  io.Reader
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
+// newRollbackCommand returns a RollbackCommand.
+func newRollbackCommand(m *Main) *RollbackCommand {
+	return &RollbackCommand{
+		Stdin:  m.Stdin,
+		Stdout: m.Stdout,
+		Stderr: m.Stderr,
+	}
+}
+
+// Run executes the command.
+func (cmd *RollbackCommand) Run(args ...string) error {
+	// Parse flags.
+	fs := flag.NewFlagSet("", flag.ContinueOnError)
+	help := fs.Bool("h", false, "")
+	if err := fs.Parse(args); err != nil {
+		return err
+	} else if *help {
+		fmt.Fprintln(cmd.Stderr, cmd.Usage())
+		return ErrUsage
+	}
+
+	// Require database path.
+	path := fs.Arg(0)
+	if path == "" {
+		return ErrPathRequired
+	}
+
+	// Open data file.
+	f, err := os.OpenFile(path, os.O_RDWR, 0666)
+	if os.IsNotExist(err) {
+		return ErrFileNotFound
+	} else if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Read two pages.
+	buf := make([]byte, 2*os.Getpagesize())
+	if _, err := io.ReadFull(f, buf); err != nil {
+		return err
+	}
+
+	// Extract meta pages.
+	meta0 := (*meta)(unsafe.Pointer(&buf[PageHeaderSize]))
+	meta1 := (*meta)(unsafe.Pointer(&buf[os.Getpagesize()+PageHeaderSize]))
+
+	// Decrement the transaction id of the higher meta page.
+	if meta0.txid > meta1.txid {
+		meta0.txid -= 2
+		meta0.checksum = meta0.sum64()
+	} else {
+		meta1.txid -= 2
+		meta1.checksum = meta1.sum64()
+	}
+
+	// Rewrite meta pages to file.
+	if _, err := f.Seek(0, os.SEEK_SET); err != nil {
+		return err
+	}
+	if _, err := f.Write(buf); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Usage returns the help message.
+func (cmd *RollbackCommand) Usage() string {
+	return strings.TrimLeft(`
+usage: bolt rollback PATH
+
+Rolls back to the previous meta page. This can only be used once on
+a data file since there are only two meta pages. Additional calls
+will flip back to the original meta page.
+`, "\n")
+}
+
 // Usage returns the help message.
 func (cmd *StatsCommand) Usage() string {
 	return strings.TrimLeft(`
@@ -1456,6 +1544,13 @@ type meta struct {
 	pgid     pgid
 	txid     txid
 	checksum uint64
+}
+
+// DO NOT EDIT. Copied from the "bolt" package.
+func (m *meta) sum64() uint64 {
+	var h = fnv.New64a()
+	_, _ = h.Write((*[unsafe.Offsetof(meta{}.checksum)]byte)(unsafe.Pointer(m))[:])
+	return h.Sum64()
 }
 
 // DO NOT EDIT. Copied from the "bolt" package.
