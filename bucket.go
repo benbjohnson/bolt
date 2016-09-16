@@ -127,7 +127,7 @@ func (b *Bucket) Bucket(name []byte) *Bucket {
 // Helper method that re-interprets a sub-bucket value
 // from a parent into a Bucket
 func (b *Bucket) openBucket(value []byte) *Bucket {
-	child := bucketPool.Get()
+	child := bucketPool.Get().(*Bucket)
 	*child = newBucket(b.tx)
 
 	// If unaligned load/stores are broken on this arch and value is
@@ -156,50 +156,22 @@ func (b *Bucket) openBucket(value []byte) *Bucket {
 }
 
 // Close releases the bucket structure so the memory can be used for another bucket.
-// Do not touch the bucket again after closing it. Note this does not effect the
+//
+// The bucket must not be used after closing it. Note this does not effect the
 // contents of the bucket in the database, just the memory allocated to control
 // access to it.
+//
 // You do not need to call Close() on your buckets, but doing so may reduce the
 // number of memory allocations, particularly when traversing a large number of
 // buckets in a read transaction.
 func (b *Bucket) Close() {
-	// if the bucket is part of a writeable transaction then we don't re-use the
+	// If the bucket is part of a writeable transaction then we don't re-use the
 	// memory as it is kept in its parent buckets map
 	if b.tx.writable {
 		return
 	}
 	bucketPool.Put(b)
 }
-
-type freeBuckets struct {
-	sync.Mutex
-	items []*Bucket
-}
-
-func (fs *freeBuckets) Get() *Bucket {
-	fs.Lock()
-	l := len(fs.items)
-	var i *Bucket
-	if l > 0 {
-		i = fs.items[l-1]
-		fs.items = fs.items[:l-1]
-	} else {
-		i = &Bucket{}
-	}
-	fs.Unlock()
-	return i
-}
-
-func (fs *freeBuckets) Put(i *Bucket) {
-	// Ensure bucket is cleaned before storage - otherwise we might stop things
-	// being cleaned up with GC
-	*i = Bucket{}
-	fs.Lock()
-	fs.items = append(fs.items, i)
-	fs.Unlock()
-}
-
-var bucketPool = freeBuckets{}
 
 // CreateBucket creates a new bucket at the given key and returns the new bucket.
 // Returns an error if the key already exists, if the bucket name is blank, or if the bucket name is too long.
@@ -438,8 +410,10 @@ func (b *Bucket) ForEach(fn func(k, v []byte) error) error {
 	if b.tx.db == nil {
 		return ErrTxClosed
 	}
+
 	c := b.Cursor()
 	defer c.Close()
+
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		if err := fn(k, v); err != nil {
 			return err
@@ -779,6 +753,12 @@ func (b *Bucket) pageNode(id pgid) (*page, *node) {
 
 	// Finally lookup the page from the transaction if no node is materialized.
 	return b.tx.page(id), nil
+}
+
+// bucketPool is a reusable pool of buckets.
+// These are only reused if Bucket.Close() is called.
+var bucketPool = sync.Pool{
+	New: func() interface{} { return &Bucket{} },
 }
 
 // BucketStats records statistics about resources used by a bucket.
