@@ -202,7 +202,7 @@ func (n *node) write(p *page) {
 	p.count = uint16(len(n.inodes))
 
 	// Stop here if there are no items to write.
-	if p.count == 0 {
+	if len(n.inodes) == 0 {
 		return
 	}
 
