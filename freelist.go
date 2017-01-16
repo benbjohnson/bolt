@@ -45,7 +45,7 @@ func (f *freelist) free_count() int {
 // pending_count returns count of pending pages
 func (f *freelist) pending_count() int {
 	var count int
-	for _, list := range f.pending {
+	for _, list := range f.pending { // DETERMINISTIC ALREADY
 		count += len(list)
 	}
 	return count
@@ -55,7 +55,8 @@ func (f *freelist) pending_count() int {
 // f.count returns the minimum length required for dst.
 func (f *freelist) copyall(dst []pgid) {
 	m := make(pgids, 0, f.pending_count())
-	for _, list := range f.pending {
+	for _, key := range randomizePendingMapKeys(f.pending) {
+		list := f.pending[key]
 		m = append(m, list...)
 	}
 	sort.Sort(m)
@@ -131,7 +132,9 @@ func (f *freelist) free(txid txid, p *page) {
 // release moves all page ids for a transaction id (or older) to the freelist.
 func (f *freelist) release(txid txid) {
 	m := make(pgids, 0)
-	for tid, ids := range f.pending {
+	for _, tid := range randomizePendingMapKeys(f.pending) {
+		ids := f.pending[tid]
+
 		if tid <= txid {
 			// Move transaction's pending pages to the available freelist.
 			// Don't remove from the cache since the page is still free.
@@ -217,7 +220,8 @@ func (f *freelist) reload(p *page) {
 
 	// Build a cache of only pending pages.
 	pcache := make(map[pgid]bool)
-	for _, pendingIDs := range f.pending {
+	for _, key := range randomizePendingMapKeys(f.pending) {
+		pendingIDs := f.pending[key]
 		for _, pendingID := range pendingIDs {
 			pcache[pendingID] = true
 		}
@@ -244,7 +248,8 @@ func (f *freelist) reindex() {
 	for _, id := range f.ids {
 		f.cache[id] = true
 	}
-	for _, pendingIDs := range f.pending {
+	for _, key := range randomizePendingMapKeys(f.pending) {
+		pendingIDs := f.pending[key]
 		for _, pendingID := range pendingIDs {
 			f.cache[pendingID] = true
 		}

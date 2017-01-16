@@ -13,6 +13,12 @@ import (
 // txid represents the internal transaction identifier.
 type txid uint64
 
+type txids []txid
+
+func (s txids) Len() int           { return len(s) }
+func (s txids) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s txids) Less(i, j int) bool { return s[i] < s[j] }
+
 // Tx represents a read-only or read/write transaction on the database.
 // Read-only transactions can be used for retrieving values for keys and creating cursors.
 // Read/write transactions can create and remove buckets and create and remove keys.
@@ -472,7 +478,8 @@ func (tx *Tx) allocate(count int) (*page, error) {
 func (tx *Tx) write() error {
 	// Sort pages by id.
 	pages := make(pages, 0, len(tx.pages))
-	for _, p := range tx.pages {
+	for _, key := range randomizePageMapKeys(tx.pages) {
+		p := tx.pages[key]
 		pages = append(pages, p)
 	}
 	// Clear out page cache early.

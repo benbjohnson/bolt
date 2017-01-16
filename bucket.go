@@ -525,7 +525,9 @@ func (b *Bucket) _forEachPageNode(pgid pgid, depth int, fn func(*page, *node, in
 // spill writes all the nodes for this bucket to dirty pages.
 func (b *Bucket) spill() error {
 	// Spill all child buckets first.
-	for name, child := range b.buckets {
+	for _, name := range randomizeBucketMapKeys(b.buckets) {
+		child := b.buckets[name]
+
 		// If the child bucket is small enough and it has no child buckets then
 		// write it inline into the parent bucket's page. Otherwise spill it
 		// like a normal bucket and make the parent value a pointer to the page.
@@ -631,10 +633,18 @@ func (b *Bucket) write() []byte {
 
 // rebalance attempts to balance all nodes.
 func (b *Bucket) rebalance() {
-	for _, n := range b.nodes {
+	for _, id := range randomizeNodeMapKeys(b.nodes) {
+		n := b.nodes[id]
+		if n == nil {
+			continue
+		}
 		n.rebalance()
 	}
-	for _, child := range b.buckets {
+	for _, name := range randomizeBucketMapKeys(b.buckets) {
+		child := b.buckets[name]
+		if child == nil {
+			continue
+		}
 		child.rebalance()
 	}
 }
@@ -695,7 +705,8 @@ func (b *Bucket) dereference() {
 		b.rootNode.root().dereference()
 	}
 
-	for _, child := range b.buckets {
+	for _, name := range randomizeBucketMapKeys(b.buckets) {
+		child := b.buckets[name]
 		child.dereference()
 	}
 }
